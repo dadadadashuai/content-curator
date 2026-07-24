@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+httpx
+pydantic
+apscheduler
+yt-dlp
+python-multipart
