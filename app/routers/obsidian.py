@@ -20,30 +20,7 @@ async def list_notes():
         raise HTTPException(status_code=500, detail=f"Failed to list notes: {str(e)}")
 
 
-@router.get("/notes/{category}")
-async def list_notes_by_category(category: str):
-    """List notes in a specific category."""
-    try:
-        all_notes = []
-        for path in obsidian_writer._iter_note_files():
-            meta = obsidian_writer._read_note_metadata(path)
-            if meta and meta.get("category", "") == category:
-                all_notes.append(meta)
-        return {"category": category, "notes": all_notes, "count": len(all_notes)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/notes/moc")
-async def regenerate_mocs():
-    """Regenerate all MOCs."""
-    try:
-        result = obsidian_writer.generate_all_mocs()
-        return {"status": "success", "result": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+# IMPORTANT: /notes/search MUST be before /notes/{category} to avoid path collision
 @router.get("/notes/search")
 async def search_notes(q: str = Query(...)):
     """Search notes by keyword in title and tags."""
@@ -68,3 +45,27 @@ async def search_notes(q: str = Query(...)):
         if title_match or tag_match:
             results.append(note)
     return {"query": q, "results": results, "count": len(results)}
+
+
+@router.post("/notes/moc")
+async def regenerate_mocs():
+    """Regenerate all MOCs."""
+    try:
+        result = obsidian_writer.generate_all_mocs()
+        return {"status": "success", "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/notes/{category}")
+async def list_notes_by_category(category: str):
+    """List notes in a specific category."""
+    try:
+        all_notes = []
+        for path in obsidian_writer._iter_note_files():
+            meta = obsidian_writer._read_note_metadata(path)
+            if meta and meta.get("category", "") == category:
+                all_notes.append(meta)
+        return {"category": category, "notes": all_notes, "count": len(all_notes)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

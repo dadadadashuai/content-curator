@@ -65,9 +65,8 @@ def _sanitize_filename(name: str, max_len: int = 80) -> str:
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
     """
     Parse YAML frontmatter from markdown text.
-
-    Returns (metadata_dict, body_text). If no frontmatter is present,
-    returns ({}, original_text).
+    Supports both inline `tags: [a, b]` and multi-line `tags:\\n  - a\\n  - b` formats.
+    Returns (metadata_dict, body_text).
     """
     meta: dict = {}
     if not text.startswith("---"):
@@ -77,31 +76,55 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     if len(parts) < 3:
         return meta, text
 
-    fm_block = parts[1].strip()
+    fm_block = parts[1]
     body = parts[2]
+    fm_lines = fm_block.splitlines()
 
-    for line in fm_block.splitlines():
-        line = line.strip()
+    i = 0
+    while i < len(fm_lines):
+        line = fm_lines[i].strip()
         if not line or line.startswith("#"):
+            i += 1
             continue
         if ":" not in line:
+            i += 1
             continue
         key, _, val = line.partition(":")
         key = key.strip()
         val = val.strip()
 
-        # Strip surrounding quotes
-        if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
-            val = val[1:-1]
+        if not val:
+            # Could be multi-line YAML list — check following lines
+            list_items = []
+            j = i + 1
+            while j < len(fm_lines):
+                next_line = fm_lines[j].strip()
+                if next_line.startswith("- "):
+                    item_val = next_line[2:].strip().strip("\"'")
+                    list_items.append(item_val)
+                    j += 1
+                elif next_line.startswith("-"):
+                    item_val = next_line[1:].strip().strip("\"'")
+                    list_items.append(item_val)
+                    j += 1
+                else:
+                    break
+            if list_items:
+                meta[key] = list_items
+                i = j
+                continue
+            meta[key] = ""
         elif val.startswith("[") and val.endswith("]"):
-            # Simple YAML list  [a, b, c]
             inner = val[1:-1].strip()
             if inner:
-                items = [x.strip().strip("'\"") for x in inner.split(",")]
-                val = items
+                meta[key] = [x.strip().strip("'\"") for x in inner.split(",")]
             else:
-                val = []
-        meta[key] = val
+                meta[key] = []
+        else:
+            if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
+                val = val[1:-1]
+            meta[key] = val
+        i += 1
 
     return meta, body
 
