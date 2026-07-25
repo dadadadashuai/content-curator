@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Clock,
-  Eye, FileText, FolderTree, Layers, Play, Plus, RefreshCw, Save,
-  Search, Tag, Trash2, XCircle,
+  Edit3, Eye, FileText, FolderTree, Layers, Play, Plus, RefreshCw, Save,
+  Search, SkipForward, Tag, Trash2, XCircle,
 } from 'lucide-react';
 import { apiClient } from '../lib/api';
 import type { Content, Creator, Note, PendingClaim, ProcessStats, Settings as SettingsType, Task } from '../lib/types';
@@ -190,8 +190,10 @@ export function Creators() {
     const expanded=expandedId===c.id;
     const [videos,setVideos]=useState<any[]>([]);
     const [vidLoading,setVidLoading]=useState(false);
-    const [selectedBvids,setSelectedBvids]=useState<Set<string>>(new Set());
+    const [selectedIds,setSelectedIds]=useState<Set<number>>(new Set());
     const [batchBusy,setBatchBusy]=useState(false);
+    const [rowBusyId,setRowBusyId]=useState<number|null>(null);
+    const [catForBatch,setCatForBatch]=useState<string>(CONTENT_TYPES[0]);
 
     const toggle=async()=>{
       if(expanded){setExpandedId(null);return;}
@@ -205,25 +207,48 @@ export function Creators() {
         setVidLoading(false);
       }
     };
-    const toggleSel=(bvid:string)=>{
-      setSelectedBvids(prev=>{const n=new Set(prev);n.has(bvid)?n.delete(bvid):n.add(bvid);return n;});
+    const toggleSel=(id:number)=>{
+      setSelectedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
     };
-    const batchProcess=async()=>{
-      if(selectedBvids.size===0)return;
-      setBatchBusy(true);
+    const allSelected=videos.length>0 && videos.every((v:any)=>selectedIds.has(v.content_id));
+    const selectAll=()=>setSelectedIds(allSelected?new Set():new Set(videos.map((v:any)=>v.content_id).filter(Boolean)));
+
+    // 通用批量操作：调用 /contents/batch-operations
+    const runBatch=async(action:'reprocess'|'skip'|'delete'|'change_category',extra?:{category?:string})=>{
+      const ids=Array.from(selectedIds);
+      if(ids.length===0)return;
+      setBatchBusy(true); setNotice('');
       try{
-        // 先import这些视频，再批量处理
-        const items=Array.from(selectedBvids).map(bv=>({bvid:bv,title:bv}));
-        const r=await apiClient.post<any>('/api/contents/import',{creator_id:c.id,platform:'bilibili',items});
-        if(r.content_ids?.length){
-          await apiClient.post('/api/contents/batch-process',{content_ids:r.content_ids});
+        const body:any={action,ids};
+        if(action==='change_category'&&extra?.category)body.category=extra.category;
+        await apiClient.post('/api/contents/batch-operations',body);
+        const lbl={reprocess:'批量处理',skip:'跳过',delete:'删除',change_category:'改分类'}[action];
+        setNotice(`${lbl} ${ids.length} 项完成`);
+        setSelectedIds(new Set());
+        if(action!=='skip'&&action!=='change_category'){
+          // 需要重新拉取视频列表
+          const r=await apiClient.get<any>(`/api/creators/${c.id}/check`);
+          setVideos(r.new_videos||[]);
         }
-        setNotice(`已处理 ${selectedBvids.size} 个视频`);
-        setSelectedBvids(new Set());
-        toggle();
         reload();
-      }catch(e){setNotice(`批量处理失败: ${e}`);}
+      }catch(e){setNotice(`批量${action}失败: ${e instanceof Error?e.message:String(e)}`);}
       setBatchBusy(false);
+    };
+
+    // 单行操作
+    const rowBatch=async(id:number,action:'skip'|'delete')=>{
+      if(!id)return;
+      if(action==='delete'&&!confirm('删除此内容？关联笔记也会删除。'))return;
+      setRowBusyId(id); setNotice('');
+      try{
+        await apiClient.post('/api/contents/batch-operations',{action,ids:[id]});
+        setNotice(action==='delete'?'已删除':'已跳过');
+        // 从本地列表移除
+        setVideos(prev=>prev.filter((v:any)=>v.content_id!==id));
+        setSelectedIds(prev=>{const n=new Set(prev);n.delete(id);return n;});
+        reload();
+      }catch(e){setNotice(`操作失败: ${e instanceof Error?e.message:String(e)}`);}
+      setRowBusyId(null);
     };
 
     return (
@@ -259,27 +284,68 @@ export function Creators() {
         {expanded && c.platform==='bilibili' && (
           <div className="mt-3 pt-3 border-t border-slate-800">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-slate-400">视频列表 ({videos.length})</span>
-              {selectedBvids.size>0 && (
-                <button className="btn btn-primary text-xs px-2 py-1" disabled={batchBusy} onClick={batchProcess}>
-                  {batchBusy?<RefreshCw size={12} className="animate-spin"/>:<Play size={12}/>} 批量处理({selectedBvids.size})
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">视频列表 ({videos.length})</span>
+                {videos.length>0 && (
+                  <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
+                    <input type="checkbox" checked={allSelected} onChange={selectAll}/> 全选
+                  </label>
+                )}
+              </div>
+              <span className="text-xs text-slate-500">{selectedIds.size>0?`已选 ${selectedIds.size}`:''}</span>
             </div>
+
+            {/* 批量操作栏 */}
+            {selectedIds.size>0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-2 p-2 rounded bg-slate-800/40 border border-slate-700/50">
+                <span className="text-xs text-slate-400 mr-1">批量:</span>
+                <button className="btn btn-primary text-xs px-2 py-1" disabled={batchBusy} onClick={()=>runBatch('reprocess')}>
+                  {batchBusy?<RefreshCw size={12} className="animate-spin"/>:<Play size={12}/>} 批量处理
+                </button>
+                <button className="btn btn-ghost text-xs px-2 py-1" disabled={batchBusy} onClick={()=>runBatch('skip')}>
+                  <SkipForward size={12}/> 跳过
+                </button>
+                <button className="btn btn-danger text-xs px-2 py-1" disabled={batchBusy} onClick={()=>{ if(confirm(`删除 ${selectedIds.size} 项？`))runBatch('delete'); }}>
+                  <Trash2 size={12}/> 删除
+                </button>
+                <div className="flex items-center gap-1">
+                  <Tag size={12} className="text-slate-500"/>
+                  <select className="text-xs bg-slate-900 border border-slate-700 rounded px-1 py-0.5" value={catForBatch} onChange={e=>setCatForBatch(e.target.value)} onClick={e=>e.stopPropagation()}>
+                    {CONTENT_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <button className="btn btn-ghost text-xs px-2 py-1" disabled={batchBusy} onClick={()=>runBatch('change_category',{category:catForBatch})}>
+                    改分类
+                  </button>
+                </div>
+              </div>
+            )}
+
             {vidLoading ? <Spinner label="加载视频..."/> : videos.length===0 ? (
               <p className="text-xs text-slate-500 text-center py-3">暂无新视频，点击刷新检查</p>
             ) : (
               <div className="space-y-1 max-h-80 overflow-y-auto">
-                {videos.map((v:any)=>(
-                  <label key={v.bvid||v.content_id} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800/50 cursor-pointer">
-                    <input type="checkbox"
-                      checked={selectedBvids.has(v.bvid||'')}
-                      onChange={()=>toggleSel(v.bvid||'')}
-                    />
+                {videos.map((v:any)=>{
+                  const cid:number=v.content_id;
+                  const sel=selectedIds.has(cid);
+                  return (
+                  <div key={v.bvid||cid} className={`flex items-center gap-2 p-1.5 rounded hover:bg-slate-800/50 ${sel?'bg-slate-800/40':''}`}>
+                    <input type="checkbox" checked={sel} onChange={()=>toggleSel(cid)}/>
                     <span className="text-sm text-slate-300 truncate flex-1" title={v.title}>{v.title||v.bvid}</span>
                     <span className="text-xs text-slate-500">{v.bvid}</span>
-                  </label>
-                ))}
+                    {/* 单行操作 */}
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button className="btn btn-ghost text-xs px-1.5 py-0.5" title="跳过"
+                        disabled={rowBusyId===cid||batchBusy} onClick={()=>rowBatch(cid,'skip')}>
+                        <SkipForward size={11}/>
+                      </button>
+                      <button className="btn btn-danger text-xs px-1.5 py-0.5" title="删除"
+                        disabled={rowBusyId===cid||batchBusy} onClick={()=>rowBatch(cid,'delete')}>
+                        {rowBusyId===cid?<RefreshCw size={11} className="animate-spin"/>:<Trash2 size={11}/>}
+                      </button>
+                    </div>
+                  </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -339,7 +405,21 @@ export function Processing() {
   const [drawerData,setDrawerData]=useState<any>(null);
   const [drawerLoading,setDrawerLoading]=useState(false);
   const [approveBusy,setApproveBusy]=useState(false);
+  const [summaryDraft,setSummaryDraft]=useState('');
+  const [summarySaving,setSummarySaving]=useState(false);
+  const [batchCat,setBatchCat]=useState<string>(CONTENT_TYPES[0]);
   const s=stats.data; const taskList=tasks.data||[];
+
+  // Keep summaryDraft in sync with drawer data when it loads/changes.
+  useEffect(()=>{ setSummaryDraft(drawerData?.ai_summary||''); }, [drawerData?.ai_summary]);
+
+  const saveSummary=async(cid:number)=>{
+    setSummarySaving(true); setNotice('');
+    try{ await apiClient.put(`/api/contents/${cid}/summary`,{summary:summaryDraft});
+      setNotice('AI摘要已保存'); setDrawerData((d:any)=>d?{...d,ai_summary:summaryDraft}:d);
+    }catch(e){ setNotice(`保存失败: ${e instanceof Error?e.message:String(e)}`); }
+    setSummarySaving(false);
+  };
 
   const cards:{label:string;value:number;color:string}[] = s ? [
     {label:'总数',value:s.total,color:'text-white'},
@@ -432,10 +512,30 @@ export function Processing() {
                     <div className="card text-xs text-slate-400 max-h-32 overflow-y-auto whitespace-pre-wrap">{(drawerData.original_subtitle||'').slice(0,500)}...</div>
                   </div>
                 )}
-                {drawerData.ai_summary && (
+                {(drawerData.ai_summary || drawerData.status==='reviewing') && (
                   <div>
-                    <div className="text-xs text-slate-400 mb-1">AI摘要</div>
-                    <div className="card text-xs text-slate-200 max-h-60 overflow-y-auto whitespace-pre-wrap">{drawerData.ai_summary}</div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-slate-400">AI摘要</span>
+                      {drawerData.status==='reviewing' && (
+                        <span className="text-xs text-slate-500 flex items-center gap-1"><Edit3 size={10}/> 可编辑</span>
+                      )}
+                    </div>
+                    {drawerData.status==='reviewing' ? (
+                      <>
+                        <textarea className="w-full text-xs text-slate-200 bg-slate-950/60 border border-slate-700 rounded p-2"
+                          rows={8} value={summaryDraft}
+                          onChange={e=>setSummaryDraft(e.target.value)}
+                          placeholder="编辑AI摘要后保存，再确认写入Obsidian"/>
+                        <div className="flex items-center gap-2 mt-2">
+                          <button className="btn btn-primary text-xs" disabled={summarySaving} onClick={()=>saveSummary(drawerId)}>
+                            {summarySaving?<RefreshCw size={12} className="animate-spin"/>:<Save size={12}/>} 保存摘要
+                          </button>
+                          <button className="btn btn-ghost text-xs" onClick={()=>setSummaryDraft(drawerData.ai_summary||'')}>重置</button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="card text-xs text-slate-200 max-h-60 overflow-y-auto whitespace-pre-wrap">{drawerData.ai_summary}</div>
+                    )}
                   </div>
                 )}
                 {drawerData.structured_info && (
