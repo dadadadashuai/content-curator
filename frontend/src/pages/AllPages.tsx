@@ -208,6 +208,14 @@ export function ContentList() {
     finally { setActionId(null); }
   };
 
+  const deleteContent = async (id: number, title: string) => {
+    if (!confirm(`删除「${title||'#'+id}」？`)) return;
+    setActionId(id); setNotice('');
+    try { await apiClient.del(`/api/contents/${id}`); setNotice('已删除'); reload(); }
+    catch (e) { setNotice(`失败: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setActionId(null); }
+  };
+
   const processBvid = async () => {
     const bvid = bvidInput.trim();
     if (!bvid) return;
@@ -244,11 +252,11 @@ export function ContentList() {
           <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setPage(1);}}>
             <option value="">全部状态</option>
             <option value="pending">pending</option><option value="done">done</option><option value="failed">failed</option>
-          </select>
-          <span className="text-xs text-slate-500">共 {total} 条</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+            </select>
+            <span className="text-xs text-slate-500">共 {total} 条</span>
+            </div>
+            <div className="overflow-x-auto">
+            <table className="w-full text-sm">
             <thead><tr className="text-left text-slate-400 border-b border-slate-800">
               <th className="py-2 pr-3">标题</th><th className="py-2 pr-3">状态</th><th className="py-2 pr-3">分类</th>
               <th className="py-2 pr-3">UP主</th><th className="py-2 pr-3">时长</th><th className="py-2 pr-3">操作</th>
@@ -263,18 +271,23 @@ export function ContentList() {
                     <td className="py-2 pr-3 text-slate-400">{c.up_name || `#${c.creator_id}`}</td>
                     <td className="py-2 pr-3 text-slate-400">{formatDuration(c.duration)}</td>
                     <td className="py-2 pr-3">
-                      {(c.status === 'pending' || c.status === 'failed') ? (
-                        <button className="btn btn-primary text-xs px-2 py-1" disabled={actionId===c.id} onClick={()=>processOne(c.id)}>
-                          {actionId===c.id ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} 处理
+                      <div className="flex items-center gap-1">
+                        {(c.status === 'pending' || c.status === 'failed') ? (
+                          <button className="btn btn-primary text-xs px-2 py-1" disabled={actionId===c.id} onClick={()=>processOne(c.id)}>
+                            {actionId===c.id ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} 处理
+                          </button>
+                        ) : c.status === 'done' ? <CheckCircle size={14} className="text-green-400" /> : null}
+                        <button className="btn btn-danger text-xs px-2 py-1" disabled={actionId===c.id} onClick={()=>deleteContent(c.id,c.title)}>
+                          <Trash2 size={12} />
                         </button>
-                      ) : c.status === 'done' ? <CheckCircle size={14} className="text-green-400" /> : '-'}
+                      </div>
                     </td>
                   </tr>
                 ))
               }
             </tbody>
-          </table>
-        </div>
+            </table>
+            </div>
         {totalPages > 1 && (
           <div className="flex items-center justify-end gap-2 mt-4 text-sm">
             <button className="btn btn-ghost text-xs" disabled={page<=1} onClick={()=>setPage(page-1)}>上一页</button>
@@ -303,6 +316,11 @@ export function Processing() {
     try { await apiClient.post(`/api/process/retry/${id}`); setNotice('已重试'); stats.reload(); tasks.reload(); }
     catch (e) { setNotice(`失败: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setRetryId(null); }
+  };
+  const delTask = async (id: number) => {
+    if (!confirm('删除此任务记录？')) return;
+    try { await apiClient.del(`/api/process/queue/${id}`); tasks.reload(); }
+    catch (e) { setNotice(`失败: ${e instanceof Error ? e.message : String(e)}`); }
   };
   return (
     <div className="space-y-4">
@@ -335,11 +353,14 @@ export function Processing() {
                     <td className="py-2 pr-3"><StatusBadge status={t.status} /></td>
                     <td className="py-2 pr-3 text-red-400 text-xs max-w-xs truncate" title={t.error}>{t.error || '-'}</td>
                     <td className="py-2 pr-3">
-                      {t.status === 'failed' && (
-                        <button className="btn btn-primary text-xs px-2 py-1" disabled={retryId===t.content_id} onClick={()=>retry(t.content_id)}>
-                          <RefreshCw size={12} /> 重试
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {t.status === 'failed' && (
+                          <button className="btn btn-primary text-xs px-2 py-1" disabled={retryId===t.content_id} onClick={()=>retry(t.content_id)}>
+                            <RefreshCw size={12} /> 重试
+                          </button>
+                        )}
+                        {t.id && <button className="btn btn-danger text-xs px-2 py-1" onClick={()=>delTask(t.id!)}><Trash2 size={12} /></button>}
+                      </div>
                     </td>
                   </tr>
                 ))}

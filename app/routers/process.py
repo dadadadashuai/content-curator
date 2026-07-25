@@ -71,6 +71,15 @@ async def list_queue(status: str = Query(None)):
     return [dict(r) for r in rows]
 
 
+@router.delete("/process/queue/{task_id}")
+async def delete_task(task_id: int):
+    """Delete a task from the queue."""
+    db = get_db()
+    db.execute("DELETE FROM task_queue WHERE id = ?", (task_id,))
+    db.commit()
+    return {"message": f"Task {task_id} deleted"}
+
+
 @router.get("/process/stats")
 async def process_stats():
     db = get_db()
