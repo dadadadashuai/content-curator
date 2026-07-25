@@ -199,13 +199,16 @@ export function Creators() {
       if(expanded){setExpandedId(null);return;}
       setExpandedId(c.id);
       if(c.platform==='bilibili'){
-        setVidLoading(true);
-        try{
-          const r=await apiClient.get<any>(`/api/creators/${c.id}/check`);
-          setVideos(r.new_videos||[]);
-        }catch(e){setVideos([]);}
-        setVidLoading(false);
+        await loadVideos();
       }
+    };
+    const loadVideos=async()=>{
+      setVidLoading(true);
+      try{
+        const r=await apiClient.get<any>(`/api/creators/${c.id}/check`);
+        setVideos(r.new_videos||[]);
+      }catch(e){setVideos([]);}
+      setVidLoading(false);
     };
     const toggleSel=(id:number)=>{
       setSelectedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
@@ -276,7 +279,9 @@ export function Creators() {
             <div className="text-xs text-slate-500 mt-1 ml-5">最后检查: {safeDate(c.last_checked)}</div>
           </div>
           <div className="flex flex-col gap-1 shrink-0">
-            {c.platform==='bilibili' && <button className="btn btn-ghost text-xs px-2 py-1" disabled={busy} onClick={()=>check(c)} title="检查新视频"><RefreshCw size={12}/></button>}
+            {c.platform==='bilibili' && <button className="btn btn-ghost text-xs px-2 py-1" disabled={busy||vidLoading} onClick={()=>{if(!expanded)toggle();else loadVideos();}} title="检查新视频">
+              <RefreshCw size={12} className={vidLoading?'animate-spin':''}/>
+            </button>}
             <button className="btn btn-danger text-xs px-2 py-1" disabled={busy} onClick={()=>del(c.id,c.name)} title="删除"><Trash2 size={12}/></button>
           </div>
         </div>
@@ -291,6 +296,9 @@ export function Creators() {
                     <input type="checkbox" checked={allSelected} onChange={selectAll}/> 全选
                   </label>
                 )}
+                <button className="btn btn-ghost text-xs px-1.5 py-0.5" disabled={vidLoading} onClick={loadVideos} title="刷新视频列表">
+                  <RefreshCw size={11} className={vidLoading?'animate-spin':''}/>
+                </button>
               </div>
               <span className="text-xs text-slate-500">{selectedIds.size>0?`已选 ${selectedIds.size}`:''}</span>
             </div>
@@ -320,7 +328,11 @@ export function Creators() {
               </div>
             )}
 
-            {vidLoading ? <Spinner label="加载视频..."/> : videos.length===0 ? (
+            {vidLoading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-slate-400 text-xs">
+                <RefreshCw size={14} className="animate-spin"/> 加载视频列表...
+              </div>
+            ) : videos.length===0 ? (
               <p className="text-xs text-slate-500 text-center py-3">暂无新视频，点击刷新检查</p>
             ) : (
               <div className="space-y-1 max-h-80 overflow-y-auto">
