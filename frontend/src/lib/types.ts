@@ -3,6 +3,7 @@ export interface Creator {
   platform: string;
   uid: string;
   name: string;
+  avatar?: string;
   update_strategy: string;
   priority: string;
   content_types: string[];
@@ -20,16 +21,15 @@ export interface Content {
   url: string;
   title: string;
   duration: number;
-  pub_date: string;
-  cover: string;
   status: string;
   error_msg: string;
+  retry_count: number;
+  processed_at: string;
+  note_path: string;
   category: string;
   sub_category: string;
   used_frames: number;
-  note_path: string;
-  ai_summary: string;
-  processed_at: string;
+  up_name?: string;
 }
 
 export interface ProcessStats {
@@ -45,13 +45,14 @@ export interface ProcessStats {
 }
 
 export interface Note {
-  path: string;
   title: string;
   category: string;
-  sub_category: string;
+  sub_category?: string;
   up: string;
   bvid: string;
   tags: string[];
+  date: string;
+  path: string;
 }
 
 export interface PendingClaim {
@@ -61,10 +62,43 @@ export interface PendingClaim {
   claim_type: string;
   status: string;
   correction: string;
-  title: string;
-  category: string;
+  content_title?: string;
+  category?: string;
+  creator_name?: string;
 }
 
 export interface Settings {
-  [key: string]: any;
+  vault_path: string;
+  ai_config: {
+    api_base: string;
+    text_model: string;
+    vision_model: string;
+    temperature: number;
+    max_tokens: number;
+  };
+  whisper_config: {
+    mode: string;
+    model_size: string;
+    language: string;
+  };
+  sessdata: string;
+  wechat_method: string;
+  schedule_config: {
+    check_time: string;
+    process_collections: boolean;
+  };
+  ad_filter_prompt: string;
+  domain_taxonomy: Record<string, string[]>;
+}
+
+export interface Task {
+  id?: number;
+  content_id: number;
+  task_type: string;
+  status: string;
+  started_at: string;
+  finished_at: string;
+  error: string;
+  content_title?: string;
+  creator_name?: string;
 }
