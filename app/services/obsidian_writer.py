@@ -152,9 +152,9 @@ def _read_note_metadata(path: Path) -> dict | None:
         "sub_category": meta.get("sub_category", ""),
         "sub_category_display": meta.get("sub_category", ""),
         "up": meta.get("up", ""),
-        "bvid": meta.get("bvid", ""),
+        "bvid": meta.get("bv", meta.get("bvid", "")),
         "tags": tags,
-        "date": meta.get("date", ""),
+        "date": meta.get("date", meta.get("published", "")),
         "path": str(path),
     }
 
@@ -444,6 +444,9 @@ def save_note(
     note_text = "\n".join(body_parts)
     note_path.write_text(note_text, encoding="utf-8")
 
+    # Write category classification copy with backlink
+    _write_category_copy(note_path, content_data, category, sub_category, title, summary, structured_info)
+
     # Update MOC.
     try:
         update_moc(category, bvid, title, sub_category)
@@ -451,6 +454,50 @@ def save_note(
         pass
 
     return str(note_path)
+
+
+def _write_category_copy(source_note_path: Path, content_data: dict,
+                          category: str, sub_category: str,
+                          title: str, summary: str, structured_info: str) -> None:
+    """Create a copy under 初始分类/{category}/ that backlinks to 数据来源.
+
+    The category copy uses an AI-rewritten domain-appropriate title.
+    For now we use the original title prefixed with date.
+    """
+    vault = _vault_root()
+    cat_dir = vault / "初始分类" / _sanitize_filename(category, max_len=60)
+    cat_dir.mkdir(parents=True, exist_ok=True)
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    safe_title = _sanitize_filename(title)
+    cat_filename = f"{date_str}_{safe_title}.md"
+    cat_path = cat_dir / cat_filename
+
+    # Build relative backlink to source note
+    try:
+        rel_source = source_note_path.relative_to(vault)
+        backlink = f"[[{str(rel_source).replace('.md','')}|来源: {content_data.get('up_name','')} - {title}]]"
+    except ValueError:
+        backlink = f"来源: {content_data.get('up_name','')} - {title}"
+
+    # Read source note content (everything after frontmatter)
+    source_text = source_note_path.read_text(encoding="utf-8")
+    parts = source_text.split("---", 2)
+    body = parts[2].strip() if len(parts) > 2 else source_text
+
+    # Build category copy: frontmatter + backlink + body
+    now = datetime.now().isoformat(timespec="seconds")
+    cat_fm = f"""---
+title: "{title}"
+category: {category}
+sub_category: "{sub_category}"
+date: {date_str}
+source_type: classification_copy
+backlink: "{str(source_note_path)}"
+---
+"""
+    cat_content = cat_fm + "\n" + f"> 来源: {backlink}\n\n" + body
+    cat_path.write_text(cat_content, encoding="utf-8")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
