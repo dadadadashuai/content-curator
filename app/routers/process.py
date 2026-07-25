@@ -16,6 +16,25 @@ async def process_content(content_id: int):
     return {"content_id": content_id, **result}
 
 
+@router.post("/process/bvid/{bvid}")
+async def process_by_bvid(bvid: str):
+    """Directly process a video by BV number — no creator needed.
+    Creates a content record if it doesn't exist, then runs the pipeline."""
+    db = get_db()
+    existing = db.execute("SELECT id FROM contents WHERE bvid = ?", (bvid,)).fetchone()
+    if existing:
+        content_id = existing["id"]
+    else:
+        cursor = db.execute(
+            "INSERT INTO contents (bvid, platform, status, title, url) VALUES (?, 'bilibili', 'pending', ?, ?)",
+            (bvid, bvid, f"https://www.bilibili.com/video/{bvid}"),
+        )
+        db.commit()
+        content_id = cursor.lastrowid
+    result = await pipeline.process_content(content_id)
+    return {"content_id": content_id, **result}
+
+
 @router.post("/process/retry/{content_id}")
 async def retry_content(content_id: int):
     db = get_db()

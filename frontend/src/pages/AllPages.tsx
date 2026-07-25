@@ -192,6 +192,8 @@ export function ContentList() {
   const [statusFilter, setStatusFilter] = useState('');
   const [actionId, setActionId] = useState<number|null>(null);
   const [notice, setNotice] = useState('');
+  const [bvidInput, setBvidInput] = useState('');
+  const [bvidBusy, setBvidBusy] = useState(false);
   const path = `/api/contents?page=${page}&page_size=${PAGE_SIZE}${statusFilter ? `&status=${statusFilter}` : ''}`;
   const { data, loading, error, reload } = useAsync<any>(() => apiClient.get(path), [page, statusFilter]);
 
@@ -206,6 +208,15 @@ export function ContentList() {
     finally { setActionId(null); }
   };
 
+  const processBvid = async () => {
+    const bvid = bvidInput.trim();
+    if (!bvid) return;
+    setBvidBusy(true); setNotice('');
+    try { const r = await apiClient.post<any>(`/api/process/bvid/${bvid}`); setNotice(r.success ? `处理成功: ${r.title||bvid}` : `处理失败: ${r.error||''}`); setBvidInput(''); reload(); }
+    catch (e) { setNotice(`失败: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setBvidBusy(false); }
+  };
+
   if (loading) return <Spinner />;
   if (error) return <ErrorBox message={error} />;
 
@@ -214,11 +225,27 @@ export function ContentList() {
       {notice && <div className="card text-sm text-slate-300">{notice}</div>}
       <div className="card">
         <div className="flex items-center gap-3 mb-4">
+          <div className="flex gap-2 flex-1">
+            <input
+              className="flex-1 max-w-xs"
+              placeholder="输入BV号直接处理 (如 BV1xxxxx)"
+              value={bvidInput}
+              onChange={e=>setBvidInput(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter')processBvid()}}
+            />
+            <button
+              className="btn btn-primary text-xs whitespace-nowrap"
+              disabled={bvidBusy||!bvidInput.trim()}
+              onClick={processBvid}
+            >
+              {bvidBusy ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />} 处理
+            </button>
+          </div>
           <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setPage(1);}}>
             <option value="">全部状态</option>
             <option value="pending">pending</option><option value="done">done</option><option value="failed">failed</option>
           </select>
-          <span className="text-xs text-slate-500 ml-auto">共 {total} 条</span>
+          <span className="text-xs text-slate-500">共 {total} 条</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
