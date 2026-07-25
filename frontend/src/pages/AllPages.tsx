@@ -331,21 +331,45 @@ export function Creators() {
 
 /* ─── 3. Processing ─── */
 export function Processing() {
-  const stats=useAsync<ProcessStats>(()=>apiClient.get('/api/process/stats'));
+  const stats=useAsync<any>(()=>apiClient.get('/api/process/stats'));
   const tasks=useAsync<Task[]>(()=>apiClient.get('/api/process/queue'));
   const [retryId,setRetryId]=useState<number|null>(null);
   const [notice,setNotice]=useState('');
+  const [drawerId,setDrawerId]=useState<number|null>(null);
+  const [drawerData,setDrawerData]=useState<any>(null);
+  const [drawerLoading,setDrawerLoading]=useState(false);
+  const [approveBusy,setApproveBusy]=useState(false);
   const s=stats.data; const taskList=tasks.data||[];
+
   const cards:{label:string;value:number;color:string}[] = s ? [
-    {label:'总数',value:s.total,color:'text-white'},{label:'待处理',value:s.pending,color:'text-yellow-400'},
-    {label:'完成',value:s.done,color:'text-green-400'},{label:'失败',value:s.failed,color:'text-red-400'},
+    {label:'总数',value:s.total,color:'text-white'},
+    {label:'待处理',value:s.pending,color:'text-yellow-400'},
+    {label:'完成',value:s.done,color:'text-green-400'},
+    {label:'失败',value:s.failed,color:'text-red-400'},
+    ...(s.reviewing ? [{label:'待审核',value:s.reviewing,color:'text-blue-400'}] : []),
+    ...(s.done_24h !== undefined ? [{label:'24h完成',value:s.done_24h,color:'text-green-300'}] : []),
   ] : [];
+
+  const openDrawer=async(cid:number)=>{
+    setDrawerId(cid); setDrawerLoading(true);
+    try{ const d=await apiClient.get<any>(`/api/process/detail/${cid}`); setDrawerData(d); }
+    catch(e){ setDrawerData(null); }
+    setDrawerLoading(false);
+  };
   const retry=async(id:number)=>{setRetryId(id);setNotice('');try{await apiClient.post(`/api/process/retry/${id}`);setNotice('已重试');stats.reload();tasks.reload();}catch(e){setNotice(`失败: ${e}`);}finally{setRetryId(null);}};
   const delTask=async(id:number)=>{if(!confirm('删除此任务？'))return;try{await apiClient.del(`/api/process/queue/${id}`);tasks.reload();}catch(e){setNotice(`失败: ${e}`);}};
+  const skipContent=async(cid:number)=>{try{await apiClient.post(`/api/process/skip/${cid}`);setNotice('已跳过');stats.reload();tasks.reload();setDrawerId(null);}catch(e){setNotice(`失败: ${e}`);}};
+  const approveContent=async(cid:number)=>{
+    setApproveBusy(true); setNotice('');
+    try{ const r=await apiClient.post<any>(`/api/process/approve/${cid}`); setNotice(`已确认: ${r.note_path||''}`); stats.reload(); tasks.reload(); setDrawerId(null); }
+    catch(e){ setNotice(`失败: ${e instanceof Error?e.message:String(e)}`); }
+    setApproveBusy(false);
+  };
+
   return (
     <div className="space-y-4">
       {notice && <div className="card text-sm text-slate-300">{notice}</div>}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
         {cards.map(c=><div key={c.label} className="card text-center"><div className="text-xs text-slate-400 mb-1">{c.label}</div><div className={`text-2xl font-bold ${c.color}`}>{c.value}</div></div>)}
       </div>
       <div className="card">
@@ -359,12 +383,15 @@ export function Processing() {
               <th className="py-2 pr-3">ID</th><th className="py-2 pr-3">类型</th><th className="py-2 pr-3">状态</th><th className="py-2 pr-3">错误</th><th className="py-2 pr-3">操作</th>
             </tr></thead>
             <tbody>{taskList.map((t,i)=>(
-              <tr key={t.id??i} className="border-b border-slate-800/60">
-                <td className="py-2 pr-3">#{t.content_id}</td><td className="py-2 pr-3 text-slate-300">{t.task_type}</td>
+              <tr key={t.id??i} className="border-b border-slate-800/60 hover:bg-slate-800/30 cursor-pointer"
+                onClick={()=>openDrawer(t.content_id)}>
+                <td className="py-2 pr-3">#{t.content_id}</td>
+                <td className="py-2 pr-3 text-slate-300">{t.task_type}</td>
                 <td className="py-2 pr-3"><StatusBadge status={t.status}/></td>
                 <td className="py-2 pr-3 text-red-400 text-xs max-w-xs truncate" title={t.error}>{t.error||'-'}</td>
-                <td className="py-2 pr-3"><div className="flex items-center gap-1">
+                <td className="py-2 pr-3"><div className="flex items-center gap-1" onClick={e=>e.stopPropagation()}>
                   {t.status==='failed' && <button className="btn btn-primary text-xs px-2 py-1" disabled={retryId===t.content_id} onClick={()=>retry(t.content_id)}><RefreshCw size={12}/> 重试</button>}
+                  <button className="btn btn-ghost text-xs px-2 py-1" onClick={()=>openDrawer(t.content_id)}><Eye size={12}/></button>
                   {t.id && <button className="btn btn-danger text-xs px-2 py-1" onClick={()=>delTask(t.id!)}><Trash2 size={12}/></button>}
                 </div></td>
               </tr>
@@ -372,6 +399,85 @@ export function Processing() {
           </table></div>
         )}
       </div>
+
+      {/* Detail Drawer */}
+      {drawerId !== null && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={()=>setDrawerId(null)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative w-full max-w-lg bg-slate-900 border-l border-slate-700 overflow-y-auto p-6" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-white">处理详情 #{drawerId}</h3>
+              <button className="btn btn-ghost text-xs" onClick={()=>setDrawerId(null)}>✕</button>
+            </div>
+            {drawerLoading ? <Spinner/> : drawerData ? (
+              <div className="space-y-4 text-sm">
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">标题</div>
+                  <div className="text-white">{drawerData.title||'-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">状态</div>
+                  <StatusBadge status={drawerData.status}/>
+                </div>
+                {drawerData.category && <div><div className="text-xs text-slate-400 mb-1">分类</div><div className="text-slate-300">{drawerData.category}{drawerData.sub_category?` / ${drawerData.sub_category}`:''}</div></div>}
+                {drawerData.cleaned_text && (
+                  <div>
+                    <div className="text-xs text-slate-400 mb-1">去广告后文稿</div>
+                    <div className="card text-xs text-slate-300 max-h-40 overflow-y-auto whitespace-pre-wrap">{(drawerData.cleaned_text||'').slice(0,500)}...</div>
+                  </div>
+                )}
+                {drawerData.original_subtitle && (
+                  <div>
+                    <div className="text-xs text-slate-400 mb-1">原始字幕</div>
+                    <div className="card text-xs text-slate-400 max-h-32 overflow-y-auto whitespace-pre-wrap">{(drawerData.original_subtitle||'').slice(0,500)}...</div>
+                  </div>
+                )}
+                {drawerData.ai_summary && (
+                  <div>
+                    <div className="text-xs text-slate-400 mb-1">AI摘要</div>
+                    <div className="card text-xs text-slate-200 max-h-60 overflow-y-auto whitespace-pre-wrap">{drawerData.ai_summary}</div>
+                  </div>
+                )}
+                {drawerData.structured_info && (
+                  <div>
+                    <div className="text-xs text-slate-400 mb-1">结构化信息</div>
+                    <div className="card text-xs text-slate-300 max-h-40 overflow-y-auto whitespace-pre-wrap">{drawerData.structured_info}</div>
+                  </div>
+                )}
+                {drawerData.frame_decision && (
+                  <div>
+                    <div className="text-xs text-slate-400 mb-1">帧决策</div>
+                    <div className="card text-xs text-slate-400">{typeof drawerData.frame_decision==='string'?drawerData.frame_decision:JSON.stringify(drawerData.frame_decision,null,2)}</div>
+                  </div>
+                )}
+                {drawerData.error_msg && <div className="text-red-400 text-xs">错误: {drawerData.error_msg}</div>}
+
+                {/* Action buttons */}
+                <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-800">
+                  {drawerData.status==='reviewing' && (
+                    <button className="btn btn-success text-xs" disabled={approveBusy} onClick={()=>approveContent(drawerId)}>
+                      <CheckCircle size={12}/> 确认并写入Obsidian
+                    </button>
+                  )}
+                  {(drawerData.status==='pending'||drawerData.status==='failed') && (
+                    <button className="btn btn-primary text-xs" onClick={()=>{retry(drawerId);setDrawerId(null);}}>
+                      <RefreshCw size={12}/> 重新处理
+                    </button>
+                  )}
+                  {drawerData.status!=='done' && drawerData.status!=='skipped' && (
+                    <button className="btn btn-ghost text-xs" onClick={()=>skipContent(drawerId)}>
+                      跳过
+                    </button>
+                  )}
+                  {drawerData.status==='done' && drawerData.note_path && (
+                    <div className="text-xs text-green-400">已写入: {drawerData.note_path}</div>
+                  )}
+                </div>
+              </div>
+            ) : <ErrorBox message="无法获取详情"/>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
