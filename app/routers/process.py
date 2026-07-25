@@ -18,8 +18,7 @@ async def process_content(content_id: int):
 
 @router.post("/process/bvid/{bvid}")
 async def process_by_bvid(bvid: str):
-    """Directly process a video by BV number — no creator needed.
-    Creates a content record if it doesn't exist, then runs the pipeline."""
+    """Directly process a video by BV number — no creator needed."""
     db = get_db()
     existing = db.execute("SELECT id FROM contents WHERE bvid = ?", (bvid,)).fetchone()
     if existing:
@@ -33,6 +32,32 @@ async def process_by_bvid(bvid: str):
         content_id = cursor.lastrowid
     result = await pipeline.process_content(content_id)
     return {"content_id": content_id, **result}
+
+
+@router.post("/process/bvid-batch")
+async def process_bvid_batch(data: dict):
+    """Batch process multiple BV numbers. Accept {bvids: 'BV1xxx\nBV2yyy'}."""
+    raw = data.get("bvids", "")
+    bvids = [line.strip() for line in raw.strip().split("\n") if line.strip() and line.strip().startswith("BV")]
+    if not bvids:
+        raise HTTPException(status_code=400, detail="No valid BV numbers found")
+    results = []
+    for bvid in bvids:
+        db = get_db()
+        existing = db.execute("SELECT id FROM contents WHERE bvid = ?", (bvid,)).fetchone()
+        if existing:
+            content_id = existing["id"]
+        else:
+            cursor = db.execute(
+                "INSERT INTO contents (bvid, platform, status, title, url) VALUES (?, 'bilibili', 'pending', ?, ?)",
+                (bvid, bvid, f"https://www.bilibili.com/video/{bvid}"),
+            )
+            db.commit()
+            content_id = cursor.lastrowid
+        r = await pipeline.process_content(content_id)
+        results.append({"bvid": bvid, "success": r.get("success", False), "title": r.get("title", ""), "error": r.get("error", "")})
+    success_count = sum(1 for r in results if r["success"])
+    return {"total": len(bvids), "success": success_count, "failed": len(bvids) - success_count, "results": results}
 
 
 @router.post("/process/retry/{content_id}")

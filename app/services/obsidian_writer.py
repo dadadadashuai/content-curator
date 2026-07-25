@@ -23,8 +23,10 @@ from .classifier import extract_knowledge_tags
 # ──────────────────────────────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────────────────────────────
-BILI_NOTES_DIR = Path("B站笔记")
-MOC_DIR = BILI_NOTES_DIR / "MOC"
+BILI_NOTES_DIR = Path("数据来源/bilibili")
+WC_NOTES_DIR = Path("数据来源/wechat")
+MANUAL_NOTES_DIR = Path("数据来源/手动输入")
+MOC_DIR = Path("初始分类/MOC")
 ATTACHMENTS_DIR = Path("attachments")
 SKIP_DIRS = {"MOC", "自查报告"}
 
@@ -41,7 +43,7 @@ def _vault_root() -> Path:
 
 
 def _notes_root() -> Path:
-    return _vault_root() / BILI_NOTES_DIR
+    return _vault_root() / "数据来源"
 
 
 def _moc_root() -> Path:
@@ -158,14 +160,12 @@ def _read_note_metadata(path: Path) -> dict | None:
 
 
 def _iter_note_files() -> list[Path]:
-    """Return all .md note files under B站笔记/, skipping MOC and 自查报告."""
+    """Return all .md note files under 数据来源/, skipping MOC and 自查报告."""
     root = _notes_root()
     if not root.exists():
         return []
-
     notes: list[Path] = []
     for p in root.rglob("*.md"):
-        # Skip files inside SKIP_DIRS directories.
         if any(part in SKIP_DIRS for part in p.parts):
             continue
         notes.append(p)
@@ -191,19 +191,28 @@ def format_duration(sec: int) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # 7. Note path computation
 # ──────────────────────────────────────────────────────────────────────────────
-def get_note_path(category: str, bvid: str, title: str) -> Path:
+def get_note_path(category: str, bvid: str, title: str,
+                  up_name: str = "", up_uid: str = "",
+                  platform: str = "bilibili", is_manual: bool = False) -> Path:
     """
-    Compute a safe note path:
+    Compute note path following the spec directory structure:
 
-        vault/B站笔记/{category}/{bvid}_{sanitized_title}.md
-
-    The ``category`` component is also sanitised.  Parent directories are NOT
-    created here — callers that write to the path should ``mkdir(parents=True)``.
+        vault/数据来源/bilibili/{UP名}_{UID}/散篇/YYYY-MM-DD_{title}.md
+        vault/数据来源/wechat/{公众号名}_{ID}/散篇/YYYY-MM-DD_{title}.md
+        vault/数据来源/手动输入/视频_BV/YYYY-MM-DD_{title}.md
     """
-    safe_cat = _sanitize_filename(category, max_len=60) or "未分类"
+    date_str = datetime.now().strftime("%Y-%m-%d")
     safe_title = _sanitize_filename(title)
-    filename = f"{bvid}_{safe_title}.md"
-    return _notes_root() / safe_cat / filename
+    filename = f"{date_str}_{safe_title}.md"
+
+    if is_manual:
+        sub = "视频_BV" if platform == "bilibili" else "文章"
+        return _vault_root() / MANUAL_NOTES_DIR / sub / filename
+
+    safe_up = _sanitize_filename(up_name or "未知UP主", max_len=40)
+    safe_uid = up_uid or "unknown"
+    up_dir = f"{safe_up}_{safe_uid}"
+    return _vault_root() / "数据来源" / platform / up_dir / "散篇" / filename
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -267,29 +276,35 @@ def _build_frontmatter(
     tags: list[str],
     used_frames: bool,
     frame_decision: dict,
+    content_type: str = "",
+    is_manual: bool = False,
 ) -> str:
-    """Build YAML frontmatter block."""
-    now = datetime.now().strftime("%Y-%m-%d")
-    duration_str = format_duration(content_data.get("duration", 0))
+    """Build YAML frontmatter per spec."""
+    now = datetime.now().isoformat(timespec="seconds")
+    pubdate = content_data.get("pubdate", "")
+    if pubdate and isinstance(pubdate, (int, float)):
+        pubdate = datetime.fromtimestamp(int(pubdate)).strftime("%Y-%m-%d")
 
     lines: list[str] = ["---"]
-    lines.append(f"title: \"{content_data.get('title', '')}\"")
-    lines.append(f"category: \"{category}\"")
-    lines.append(f"sub_category: \"{sub_category}\"")
-    lines.append(f"date: {now}")
+    lines.append(f"source: {content_data.get('platform', 'bilibili')}")
     lines.append(f"up: \"{content_data.get('up_name', '')}\"")
-    lines.append(f"up_uid: \"{content_data.get('up_uid', '')}\"")
-    lines.append(f"bvid: {content_data.get('bvid', '')}")
-    lines.append(f"aid: {content_data.get('aid', '')}")
-    lines.append(f"cid: {content_data.get('cid', '')}")
-    lines.append(f"duration: {duration_str}")
+    lines.append(f"uid: \"{content_data.get('up_uid', '')}\"")
+    lines.append(f"bv: {content_data.get('bvid', '')}")
     lines.append(f"url: {content_data.get('url', '')}")
-    lines.append(f"cover: {content_data.get('cover', '')}")
-    lines.append(f"pubdate: {content_data.get('pubdate', '')}")
-    lines.append(f"used_frames: {str(used_frames).lower()}")
-
-    if frame_decision:
-        lines.append(f"frame_decision: \"{frame_decision.get('decision', '')}\"")
+    lines.append(f"published: {pubdate}")
+    lines.append(f"duration: \"{format_duration(content_data.get('duration', 0))}\"")
+    if content_type:
+        lines.append(f"content_type: {content_type}")
+    lines.append(f"processed_at: {now}")
+    lines.append(f"status: done")
+    lines.append(f"collection: ")  # 可空
+    lines.append(f"manual: {str(is_manual).lower()}")
+    lines.append(f"ad_removed: true")
+    lines.append(f"category: {category}")
+    if sub_category:
+        lines.append(f"sub_category: \"{sub_category}\"")
+    if used_frames:
+        lines.append(f"used_frames: true")
 
     if tags:
         tag_str = ", ".join(tags)
@@ -342,7 +357,11 @@ def save_note(
     bvid = content_data.get("bvid", "")
     title = content_data.get("title", "untitled")
 
-    note_path = get_note_path(category, bvid, title)
+    note_path = get_note_path(category, bvid, title,
+                              up_name=content_data.get("up_name",""),
+                              up_uid=content_data.get("up_uid",""),
+                              platform=content_data.get("platform","bilibili"),
+                              is_manual=content_data.get("manual", False))
     note_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Save keyframes and build image embeds.
@@ -353,7 +372,9 @@ def save_note(
     tags = extract_knowledge_tags(title, summary)
 
     # Build frontmatter.
-    frontmatter = _build_frontmatter(content_data, category, sub_category, tags, used_frames, frame_decision)
+    frontmatter = _build_frontmatter(content_data, category, sub_category, tags, used_frames, frame_decision,
+                                     content_type=content_data.get("content_type",""),
+                                     is_manual=content_data.get("manual", False))
 
     # Build body.
     body_parts: list[str] = [frontmatter, ""]
@@ -436,40 +457,26 @@ def save_note(
 # 2 & 6. MOC management
 # ──────────────────────────────────────────────────────────────────────────────
 def update_moc(category: str, bvid: str, title: str, sub_category: str = "") -> None:
-    """
-    Maintain a MOC (Map of Content) index file per domain.
-
-    Scans all notes in ``vault/B站笔记/{category}/``, groups them by
-    sub_category, and regenerates ``vault/B站笔记/MOC/{category}.md``.
-    """
+    """Maintain a MOC index file per domain under 初始分类/MOC/."""
     moc_root = _moc_root()
     moc_root.mkdir(parents=True, exist_ok=True)
 
-    category_dir = _notes_root() / _sanitize_filename(category, max_len=60)
-    if not category_dir.is_dir():
-        return
-
+    # Scan all notes and group by category from frontmatter
     notes: list[dict] = []
-    for md_file in sorted(category_dir.glob("*.md")):
+    for md_file in _iter_note_files():
         meta = _read_note_metadata(md_file)
-        if meta is None:
-            # Fallback: derive from filename.
-            parts = md_file.stem.split("_", 1)
-            notes.append({
-                "title": parts[1] if len(parts) > 1 else md_file.stem,
-                "bvid": parts[0] if len(parts) > 0 else "",
-                "sub_category": "",
-            })
-        else:
+        if meta and meta.get("category") == category:
             notes.append(meta)
+        elif meta is None:
+            # Fallback: derive from filename
+            parts = md_file.stem.split("_", 1)
+            notes.append({"title": parts[1] if len(parts)>1 else md_file.stem, "sub_category": "", "up": ""})
 
-    # Group by sub_category.
     grouped: dict[str, list[dict]] = defaultdict(list)
     for note in notes:
         sub = note.get("sub_category", "") or ""
         grouped[sub].append(note)
 
-    # Build MOC content.
     moc_path = moc_root / f"{_sanitize_filename(category, max_len=60)}.md"
     lines: list[str] = [
         "---",
@@ -490,10 +497,7 @@ def update_moc(category: str, bvid: str, title: str, sub_category: str = "") -> 
         lines.append("")
         for note in sub_notes:
             note_title = note.get("title", "")
-            note_bvid = note.get("bvid", "")
-            # Obsidian wikilink by filename (without extension).
-            safe_title = _sanitize_filename(note_title)
-            link_target = f"{note_bvid}_{safe_title}" if note_bvid else safe_title
+            link_target = _sanitize_filename(note_title)
             lines.append(f"- [[{link_target}|{note_title}]]")
         lines.append("")
 

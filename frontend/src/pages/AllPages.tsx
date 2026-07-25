@@ -73,6 +73,35 @@ export function Dashboard() {
   );
 }
 
+/* ─── Batch BV Input ─── */
+function BatchBvidInput({ onDone }: { onDone: () => void }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState('');
+  const submit = async () => {
+    if (!text.trim()) return;
+    setBusy(true); setResult('');
+    try {
+      const r = await apiClient.post<any>('/api/process/bvid-batch', { bvids: text });
+      setResult(`完成: ${r.success}/${r.total} 成功`);
+      setText('');
+      onDone();
+    } catch (e) { setResult(`失败: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-2">
+      <textarea className="w-full text-sm" rows={5} placeholder="BV1xxx&#10;BV2yyy&#10;BV3zzz" value={text} onChange={e=>setText(e.target.value)} />
+      <div className="flex items-center gap-2 mt-1">
+        <button className="btn btn-primary text-xs" disabled={busy||!text.trim()} onClick={submit}>
+          {busy ? <RefreshCw size={12} className="animate-spin"/> : <Play size={12}/>} 批量处理
+        </button>
+        {result && <span className="text-xs text-slate-400">{result}</span>}
+      </div>
+    </div>
+  );
+}
+
 /* ─── 2. Creators (合并内容清单) ─── */
 const UPDATE_STRATEGIES = [
   { value: 'select', label: '选择更新' },
@@ -278,13 +307,19 @@ export function Creators() {
   return (
     <div className="space-y-4">
       {notice && <div className="card text-sm text-slate-300">{notice}</div>}
-      {/* BV号直接处理 */}
-      <div className="card flex items-center gap-2">
-        <input className="flex-1 max-w-xs" placeholder="输入BV号直接处理" value={bvidInput}
-          onChange={e=>setBvidInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')processBvid()}}/>
-        <button className="btn btn-primary text-xs whitespace-nowrap" disabled={bvidBusy||!bvidInput.trim()} onClick={processBvid}>
-          {bvidBusy?<RefreshCw size={14} className="animate-spin"/>:<Play size={14}/>} 处理
-        </button>
+      {/* BV号直接处理 + 批量 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-2">
+          <input className="flex-1 max-w-xs" placeholder="单个BV号" value={bvidInput}
+            onChange={e=>setBvidInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')processBvid()}}/>
+          <button className="btn btn-primary text-xs whitespace-nowrap" disabled={bvidBusy||!bvidInput.trim()} onClick={processBvid}>
+            {bvidBusy?<RefreshCw size={14} className="animate-spin"/>:<Play size={14}/>} 处理
+          </button>
+        </div>
+        <details className="mt-2">
+          <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-300">批量添加BV号（一行一个）</summary>
+          <BatchBvidInput onDone={()=>{reload();}}/>
+        </details>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Col title="B站 bilibili" list={bili} search={biliSearch} setSearch={setBiliSearch} addForm={addBili} setAddForm={setAddBili} platform="bilibili"/>
