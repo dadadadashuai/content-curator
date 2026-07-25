@@ -170,33 +170,7 @@ async def process_content(content_id: int) -> dict:
             ad_filter_prompt=ad_filter_prompt
         )
 
-        # Save Obsidian note
-        note_path = obsidian_writer.save_note(
-            content_data={
-                "bvid": bvid,
-                "title": content.get("title", ""),
-                "up_name": content.get("up_name", ""),
-                "up_uid": content.get("up_mid", content.get("up_uid", "")),
-                "aid": content.get("aid", ""),
-                "cid": content.get("cid", ""),
-                "duration": content.get("duration", 0),
-                "url": content.get("url", f"https://www.bilibili.com/video/{bvid}"),
-                "cover": content.get("cover", ""),
-                "pubdate": content.get("pubdate", 0),
-                "platform": platform,
-                "content_type": content.get("content_type", ""),
-                "manual": not bool(content.get("creator_id")),
-            },
-            summary=summary,
-            category=category,
-            sub_category=sub_category,
-            frame_analysis=frame_analysis,
-            frame_decision=frame_decision,
-            structured_info=structured_info,
-            used_frames=used_frames
-        )
-
-        # Compute content hash for incremental review
+        # Store summary and intermediate data in DB for review (not writing to Obsidian yet)
         content_hash = hashlib.md5((summary + cleaned_text).encode()).hexdigest()[:12]
 
         # Extract and store pending claims
@@ -211,11 +185,12 @@ async def process_content(content_id: int) -> dict:
             conn.commit()
             conn.close()
 
-        # ── Done ──
-        _update_status(content_id, "done",
-            note_path=note_path,
+        # ── Reviewing state — user must approve before writing to Obsidian ──
+        _update_status(content_id, "reviewing",
             ai_summary=summary,
             structured_info=structured_info,
+            cleaned_text=cleaned_text,
+            original_subtitle=subtitle_text,
             used_frames=int(used_frames),
             frame_decision=str(frame_decision),
             content_hash=content_hash)
@@ -231,7 +206,7 @@ async def process_content(content_id: int) -> dict:
         conn.commit()
         conn.close()
 
-        _record_task(content_id, "process", "done", f"note={note_path}")
+        _record_task(content_id, "process", "done", f"status=reviewing, awaiting approval")
 
         return {
             "success": True,
@@ -241,7 +216,7 @@ async def process_content(content_id: int) -> dict:
             "category": category,
             "sub_category": sub_category,
             "used_frames": used_frames,
-            "note_path": note_path,
+            "note_path": "",
             "claims_count": len(claims)
         }
 

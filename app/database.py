@@ -63,6 +63,8 @@ def init_db():
         content_hash TEXT,
         ai_summary TEXT,
         structured_info TEXT,
+        cleaned_text TEXT,
+        original_subtitle TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(platform, bvid)
     );
