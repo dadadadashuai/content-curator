@@ -65,6 +65,7 @@ def init_db():
         structured_info TEXT,
         cleaned_text TEXT,
         original_subtitle TEXT,
+        content_tags TEXT DEFAULT '[]',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(platform, bvid)
     );

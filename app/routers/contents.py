@@ -120,6 +120,171 @@ async def bulk_import(data: dict):
     return {"imported": len(inserted_ids), "skipped": skipped, "content_ids": inserted_ids}
 
 
+@router.get("/creators/{creator_id}/collections")
+async def check_collections(creator_id: int):
+    """Check B站 collections/合集 for a creator."""
+    db = get_db()
+    creator = db.execute("SELECT * FROM creators WHERE id=?", (creator_id,)).fetchone()
+    if not creator:
+        raise HTTPException(status_code=404, detail=f"Creator {creator_id} not found")
+    if creator["platform"] != "bilibili":
+        raise HTTPException(status_code=400, detail="Only bilibili supports collections")
+    from ..services import bilibili
+    collections = bilibili.check_collections(creator["uid"])
+    return {"creator_id": creator_id, "collections": collections}
+
+
+@router.post("/contents/batch-operations")
+async def batch_operations(data: dict):
+    """Batch operations on contents.
+    Body: {action: 'reprocess'|'delete'|'skip'|'change_category', ids: [1,2,3], category?: '新领域'}
+    """
+    action = data.get("action", "")
+    ids = data.get("ids", [])
+    category = data.get("category", "")
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="ids list required")
+
+    db = get_db()
+    results = []
+
+    if action == "reprocess":
+        from ..services import pipeline
+        for cid in ids:
+            r = await pipeline.process_content(cid)
+            results.append({"id": cid, "success": r.get("success", False)})
+    elif action == "delete":
+        for cid in ids:
+            # Also delete Obsidian note if exists
+            row = db.execute("SELECT note_path FROM contents WHERE id=?", (cid,)).fetchone()
+            if row and row["note_path"]:
+                import os
+                try: os.remove(row["note_path"])
+                except: pass
+            db.execute("DELETE FROM contents WHERE id=?", (cid,))
+        db.commit()
+        results.append({"deleted": len(ids)})
+    elif action == "skip":
+        for cid in ids:
+            db.execute("UPDATE contents SET status='skipped' WHERE id=?", (cid,))
+        db.commit()
+        results.append({"skipped": len(ids)})
+    elif action == "change_category":
+        if not category:
+            raise HTTPException(status_code=400, detail="category required for change_category")
+        for cid in ids:
+            db.execute("UPDATE contents SET category=? WHERE id=?", (category, cid))
+        db.commit()
+        results.append({"changed": len(ids), "category": category})
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+
+    return {"action": action, "results": results}
+
+
+@router.put("/contents/{content_id}/tags")
+async def update_content_tags(content_id: int, data: dict):
+    """Update custom tags for a content item."""
+    tags = data.get("tags", [])
+    db = get_db()
+    import json
+    db.execute("UPDATE contents SET content_tags=? WHERE id=?",
+               (json.dumps(tags, ensure_ascii=False), content_id))
+    db.commit()
+    return {"content_id": content_id, "tags": tags}
+
+
+@router.put("/contents/{content_id}/summary")
+async def update_content_summary(content_id: int, data: dict):
+    """Update AI summary text (for manual editing in review drawer)."""
+    summary = data.get("summary", "")
+    db = get_db()
+    db.execute("UPDATE contents SET ai_summary=? WHERE id=?", (summary, content_id))
+    db.commit()
+    return {"content_id": content_id, "updated": True}
+
+
+@router.post("/contents/aggregate")
+async def aggregate_topics(data: dict):
+    """AI-powered cross-source topic aggregation.
+    Reads all done notes, groups by category, uses AI to extract topics and merge.
+    """
+    from ..services import ai_summary
+    from ..config import get_vault_path
+    from ..services import obsidian_writer
+    import os
+
+    db = get_db()
+    done_items = db.execute(
+        "SELECT id, title, category, ai_summary FROM contents WHERE status='done' ORDER BY category"
+    ).fetchall()
+
+    if not done_items:
+        return {"error": "No completed content to aggregate"}
+
+    # Group by category
+    from collections import defaultdict
+    by_cat = defaultdict(list)
+    for item in done_items:
+        cat = item["category"] or "未分类"
+        by_cat[cat].append(dict(item))
+
+    vault = get_vault_path()
+    all_domain_dir = vault / "全领域"
+    all_domain_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for cat, items in by_cat.items():
+        if len(items) < 2:
+            continue  # Skip single-item categories
+
+        # Build context for AI
+        notes_text = "\n\n---\n\n".join([
+            f"【{i['title']}】\n{(i['ai_summary'] or '')[:1000]}"
+            for i in items[:20]
+        ])
+
+        prompt = f"""你是知识聚合助手。以下是「{cat}」领域的多篇文章摘要。
+请提取出该领域的核心主题（2-5个），每个主题合并所有相关文章的要点。
+
+格式要求：
+# 主题：xxx
+## 要点1：xxx
+- 关键事实（≤30字）
+> 来源：[[初始分类/{cat}/标题1]]、[[初始分类/{cat}/标题2]]
+
+## 要点2：xxx
+- 关键事实
+> 来源：[[初始分类/{cat}/标题3]]
+
+注意事项：
+- 每条要点≤30字，整篇≤300字
+- 每组要点必须附来源[[]]
+- 同一主题合并多来源，去重
+
+文章摘要：
+{notes_text}
+"""
+        try:
+            from ..config import get_ai_config
+            import os
+            ai_cfg = get_ai_config()
+            result = ai_summary._call_api(
+                "你是知识聚合助手，只输出Markdown正文。",
+                prompt, timeout=90, max_tokens=2000
+            )
+
+            # Write to 全领域/{category}.md
+            cat_path = all_domain_dir / f"{cat}.md"
+            cat_path.write_text(result, encoding="utf-8")
+            results.append({"category": cat, "topics_file": str(cat_path), "notes_count": len(items)})
+        except Exception as e:
+            results.append({"category": cat, "error": str(e)})
+
+    return {"aggregated": len(results), "results": results}
+
+
 @router.get("/creators/{creator_id}/check")
 async def check_new_videos(creator_id: int):
     """Check for new videos from a bilibili creator."""
